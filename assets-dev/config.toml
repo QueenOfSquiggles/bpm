@@ -1,19 +1,10 @@
 file_watching_rate_seconds = 0.3
 
 [extensions]
-raw = []
-texture = [
-    "jpg",
-    "png",
-]
-mesh = [
-    "glb",
-    "gltf",
-]
-audio = [
-    "ogg",
-    "wav",
-]
+raw = ["txt"]
+texture = ["jpg", "png"]
+mesh = ["glb", "gltf"]
+audio = ["ogg", "wav"]
 
 [meshes]
 use_meshlets = false

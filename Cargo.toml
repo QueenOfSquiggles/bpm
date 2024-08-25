@@ -7,6 +7,7 @@ edition = "2021"
 bevy = { version = "0.14.1", features = ["meshlet"] }
 clap = { version = "4.5.16", features = ["derive"] }
 gltf_kun = "0.0.13"
+humantime = "2.1.0"
 libktx-rs = { version = "0.3.3", features = ["write"] }
 serde = "1.0.208"
 symphonia = "0.5.4"

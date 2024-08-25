@@ -3,7 +3,10 @@ use std::{
     path::Path,
 };
 
-use bevy::prelude::*;
+use bevy::{
+    log::{Level, LogPlugin},
+    prelude::*,
+};
 use clap::Parser;
 use config::Config;
 use processing::{ProcessingType, RefreshTimer};
@@ -21,6 +24,8 @@ mod texture;
 struct Cli {
     #[arg(short, long, value_name = "BOOL", action=clap::ArgAction::SetTrue)]
     oneshot: Option<bool>,
+    #[arg(short, long, value_name = "BOOL", action=clap::ArgAction::SetTrue)]
+    verbose: Option<bool>,
 }
 
 fn main() {
@@ -28,6 +33,14 @@ fn main() {
     let config = load_configuration().unwrap_or_default();
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
+        .add_plugins(LogPlugin {
+            level: if cli.verbose.unwrap_or_default() {
+                Level::DEBUG
+            } else {
+                Level::INFO
+            },
+            ..default()
+        })
         .insert_resource(config)
         .add_systems(Startup, initialize)
         .add_systems(Update, processing::check_for_stale_files);
@@ -40,7 +53,7 @@ fn main() {
     } else {
         app.run();
     }
-    // println!("Handled CLI data {:?}", cli);
+    debug!("Handled CLI data {:?}", cli);
 }
 fn initialize(mut commands: Commands, config: Res<Config>) {
     commands.spawn(RefreshTimer(Timer::from_seconds(
@@ -68,7 +81,7 @@ fn load_configuration() -> Option<Config> {
     if let Some(config) = config::load_config(file_text.as_str()) {
         return Some(config);
     } else {
-        eprintln!("Configuration appears to be corrupted");
+        error!("Configuration appears to be corrupted");
     }
     None
 }

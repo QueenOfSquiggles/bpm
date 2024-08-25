@@ -1,12 +1,13 @@
 use std::{
-    collections::VecDeque,
+    cmp::Ordering,
     fs,
     path::{Path, PathBuf},
-    time::SystemTime,
+    time::{Duration, Instant},
 };
 
 use crate::{config::Config, raw::ProcessingRaw};
 use bevy::prelude::*;
+use humantime::format_duration;
 use walkdir::WalkDir;
 
 /// The core component that links an entity to a specific file in the staging directory
@@ -14,6 +15,7 @@ use walkdir::WalkDir;
 pub struct FileQueuedForProcessing {
     pub source: PathBuf,
     pub dest: PathBuf,
+    pub queue_time: Instant,
 }
 
 /// The core trait for processing information.
@@ -21,8 +23,12 @@ pub struct FileQueuedForProcessing {
 pub trait ProcessingType: 'static {
     type Comp: Component;
     fn get_component() -> Self::Comp;
-    fn matches(ext: String, config: &Res<Config>) -> bool;
-    fn system(query: Query<&FileQueuedForProcessing, With<Self::Comp>>, config: Res<Config>);
+    fn matches(ext: &String, config: &Res<Config>) -> bool;
+    fn system(
+        query: Query<(Entity, &FileQueuedForProcessing), With<Self::Comp>>,
+        config: Res<Config>,
+        commands: Commands,
+    );
 
     fn register(app: &mut App) {
         app.add_systems(Update, Self::system);
@@ -34,6 +40,7 @@ pub struct RefreshTimer(pub Timer);
 
 pub fn check_for_stale_files(
     mut timer_query: Query<&mut RefreshTimer>,
+    currently_queued: Query<&FileQueuedForProcessing>,
     mut commands: Commands,
     time: Res<Time>,
     config: Res<Config>,
@@ -43,6 +50,12 @@ pub fn check_for_stale_files(
     if !timer.0.finished() {
         return;
     }
+    let currently_queued_paths = currently_queued
+        .iter()
+        .map(|comp| comp.source.clone())
+        .collect::<Vec<_>>();
+
+    let mut count: usize = 0;
 
     for entry_result in WalkDir::new(Path::new("assets-dev"))
         .follow_links(true)
@@ -52,25 +65,46 @@ pub fn check_for_stale_files(
             Ok(e) => e,
             Err(err) => {
                 // handle IO errors
-                eprintln!("Error encountered while checking for stale files: {:}", err);
+                error!("Error encountered while checking for stale files: {:}", err);
                 continue;
             }
         };
+
+        let Ok(entry_path) = entry.path().strip_prefix(Path::new("assets-dev")) else {
+            error!("Failed to strip prefix 'assets-dev' from source file path. This likely means we somehow got in the wrong folder!!!");
+            continue;
+        };
+        let source_path = Path::new("assets-dev").join(entry_path);
+        let dest_path = Path::new("assets").join(entry_path);
+
+        if currently_queued_paths.contains(&source_path) {
+            // skip already queued paths.
+            continue;
+        }
         if entry.file_type().is_dir() {
             // replicate directory structure
             // TODO: would be nice to be able to omit empty dirs.
 
-            let _ = fs::create_dir_all(entry.path());
+            let _ = fs::create_dir_all(dest_path);
             continue;
         }
 
-        let source_path = Path::new("assets-dev").join(entry.clone().into_path());
-        let dest_path = Path::new("assets").join(entry.into_path());
         if is_stale(&source_path, &dest_path) {
             if queue_file(&mut commands, source_path.clone(), dest_path, &config) {
-                println!("Stale File: {}", source_path.display());
+                count += 1;
+                debug!("Queued for processing: {}", source_path.display());
             }
         }
+    }
+    if count > 0 {
+        let total = count + currently_queued_paths.len();
+        debug!(
+            "Queued {} files for processing. {} file already queued. {} total files in processing",
+            count,
+            currently_queued_paths.len(),
+            total
+        );
+        debug!("Previously queued paths: {:#?}", currently_queued_paths);
     }
 }
 
@@ -98,13 +132,11 @@ fn is_stale(source: &PathBuf, dest: &PathBuf) -> bool {
         },
     };
     if time_source.is_none() || time_dest.is_none() {
-        eprintln!("Your system does not support some of the basic file operations required for this app to work. Honestly I have no clue how we got here. Error referring to: {}", source.display());
+        error_once!("Your system does not support some of the basic file operations required for this app to work. Honestly I have no clue how we got here. Error referring to: {}", source.display());
         return false;
     }
     // unwrapping should technically be safe at this point.
-    time_source.unwrap().cmp(time_dest.unwrap());
-
-    false
+    time_source.unwrap().cmp(&time_dest.unwrap()) == Ordering::Greater
 }
 fn queue_file(
     commands: &mut Commands,
@@ -122,10 +154,20 @@ fn queue_file(
     else {
         return false;
     };
-    let mut ec = commands.spawn(FileQueuedForProcessing { source, dest });
-    if ProcessingRaw::matches(file_ext, config) {
-        ec.insert(ProcessingRaw::get_component());
+    if ProcessingRaw::matches(&file_ext, config) {
+        commands.spawn((
+            FileQueuedForProcessing {
+                source,
+                dest,
+                queue_time: Instant::now(),
+            },
+            ProcessingRaw::get_component(),
+        ));
         return true;
     }
     false
+}
+
+pub fn get_human_duration(duration: Duration) -> String {
+    format_duration(duration).to_string()
 }
