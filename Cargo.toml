@@ -1,0 +1,14 @@
+[package]
+name = "bpm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { version = "0.14.1", features = ["meshlet"] }
+clap = { version = "4.5.16", features = ["derive"] }
+gltf_kun = "0.0.13"
+libktx-rs = { version = "0.3.3", features = ["write"] }
+serde = "1.0.208"
+symphonia = "0.5.4"
+toml = "0.8.19"
+walkdir = "2.5.0"
