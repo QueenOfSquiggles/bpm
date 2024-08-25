@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 bevy = { version = "0.14.1", features = ["meshlet"] }
+bevy_gltf_kun = "0.0.13"
 clap = { version = "4.5.16", features = ["derive"] }
 gltf_kun = "0.0.13"
 humantime = "2.1.0"

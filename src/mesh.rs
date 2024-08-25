@@ -1,40 +1,31 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    pin::pin,
-};
+use std::{fs, path::Path};
 
-use bevy::{
-    gltf::Gltf,
-    log::{error, info},
-    prelude::{Component, DespawnRecursiveExt, Res},
-    tasks::futures_lite::stream::{self, block_on},
+use bevy::prelude::*;
+use bevy_gltf_kun::{
+    export::gltf::{GltfExportEvent, GltfExportResult},
+    import::gltf::{scene::GltfScene, GltfKun},
 };
-use gltf_kun::{
-    extensions::DefaultExtensions,
-    graph::Graph,
-    io::format::{
-        glb::{GlbExport, GlbFormat, GlbImport},
-        gltf::{self, GltfFormat},
-    },
-};
+use gltf_kun::{extensions::DefaultExtensions, io::format::glb::GlbExport};
 
-use crate::{config::Config, processing::ProcessingType};
+use crate::{
+    config::Config,
+    processing::{get_human_duration, FileQueuedForProcessing, ProcessingType},
+};
 
 #[derive(Component)]
 pub struct FileMesh;
 
 /// A component to mark mesh files that cannot be processed until the necessary textures are completed
-#[derive(Component, Debug)]
-struct FileMeshAwaitingTextures {
-    textures: Vec<SourceDestPair>,
-}
+// #[derive(Component, Debug)]
+// struct FileMeshAwaitingTextures {
+//     textures: Vec<SourceDestPair>,
+// }
 
-#[derive(Debug)]
-struct SourceDestPair {
-    source: PathBuf,
-    destination: PathBuf,
-}
+// #[derive(Debug)]
+// struct SourceDestPair {
+//     source: PathBuf,
+//     destination: PathBuf,
+// }
 
 pub struct ProcessingMesh;
 
@@ -57,101 +48,64 @@ impl ProcessingType for ProcessingMesh {
     }
 
     fn system(
-        query: bevy::prelude::Query<
-            (
-                bevy::prelude::Entity,
-                &crate::processing::FileQueuedForProcessing,
-            ),
-            bevy::prelude::With<Self::Comp>,
-        >,
-        config: bevy::prelude::Res<crate::config::Config>,
-        mut commands: bevy::prelude::Commands,
+        _: Query<(Entity, &FileQueuedForProcessing), With<Self::Comp>>,
+        _: Res<Config>,
+        _: Commands,
     ) {
-        for (e, entry) in query.iter() {
-            let Some(os_ext) = entry.source.extension() else {
-                continue;
-            };
-            let is_processed = match os_ext.to_str() {
-                Some(ext) => match ext.to_ascii_lowercase().as_str() {
-                    "glb" => process_gltf_format(
-                        &entry.source,
-                        &entry.dest,
-                        SceneExt::Glb,
-                        config.clone(),
-                    ),
-                    "gltf" => process_gltf_format(
-                        &entry.source,
-                        &entry.dest,
-                        SceneExt::Gltf,
-                        config.clone(),
-                    ),
-                    "glxf" => process_gltf_format(
-                        &entry.source,
-                        &entry.dest,
-                        SceneExt::Glxf,
-                        config.clone(),
-                    ),
-                    _ => false,
-                },
-                None => false,
-            };
-            if !is_processed {
-                panic!("Failed to find proper processing format for {}. Ensure your configuration is not incorrect. Valid extensions for meshes: [glb, gltf, glxf]", entry.source.display());
-            }
-            commands.entity(e).despawn_recursive();
-        }
+    }
+
+    fn register(app: &mut bevy::prelude::App) {
+        app.add_systems(Update, (load_gltf_scenes).chain());
     }
 }
 
-enum SceneExt {
-    Glb,
-    Gltf,
-    Glxf,
-}
+fn load_gltf_scenes(
+    query: Query<&FileQueuedForProcessing, With<FileMesh>>,
+    assets: Res<AssetServer>,
+    kun_scenes: Res<Assets<GltfKun>>,
+    scenes: Res<Assets<GltfScene>>,
+    mut export: EventWriter<GltfExportEvent<DefaultExtensions>>,
+    mut results: ResMut<Events<GltfExportResult>>,
+) {
+    for entry in query.iter() {
+        let Ok(canonical_path) = entry.source.canonicalize() else {
+            error!(
+                "Failed to load canonical path for: {}",
+                entry.source.display()
+            );
+            continue;
+        };
+        debug!("Asset server path to load: {}", canonical_path.display());
+        let scene_handle = assets.load::<GltfKun>(canonical_path);
+        let gltf = match kun_scenes.get(&scene_handle) {
+            Some(a) => a,
+            None => {
+                error!("Failed to load GltfKun from handle!");
+                continue;
+            }
+        };
+        for scene in gltf.scenes.iter() {
+            if let Some(scene_asset) = scenes.get(scene) {
+                export.send(GltfExportEvent::new(scene_asset.scene.clone()));
 
-fn process_gltf_format(
-    source_file: &PathBuf,
-    dest_file: &PathBuf,
-    format: SceneExt,
-    config: Config,
-) -> bool {
-    let doc = match format {
-        SceneExt::Glb => {
-            let format = GlbFormat(fs::read(source_file).unwrap_or_default());
-            let mut graph = Graph::new();
-            let boxed_glb = Box::pin(stream::once_future(GlbImport::<DefaultExtensions>::import(
-                &mut graph, format,
-            )));
-            let mut result_iter = stream::block_on(boxed_glb);
-            let Some(res) = result_iter.next() else {
-                error!("Failed to load gltf data from future!");
-                return false;
-            };
-            match res {
-                Ok(doc) => doc,
-                Err(err) => {
-                    error!(
-                        "GLB Import error on file: {} :: {}",
-                        source_file.display(),
-                        err
+                for mut event in results.drain() {
+                    let Ok(doc) = event.result else {
+                        continue;
+                    };
+                    let Ok(bytes) = GlbExport::<DefaultExtensions>::export(&mut event.graph, &doc)
+                    else {
+                        continue;
+                    };
+                    let _ = fs::write(entry.dest.clone(), bytes.0);
+                    let time = entry.queue_time.elapsed();
+                    info!(
+                        "{} => {} -- {}",
+                        entry.source.display(),
+                        entry.dest.display(),
+                        get_human_duration(time)
                     );
-                    return false;
                 }
             }
         }
-        SceneExt::Gltf => {
-            // let format = GltfFormat {
-            //     json: gltf_js,
-            //     resources: todo!(),
-            // };
-            todo!()
-        }
-        SceneExt::Glxf => todo!(),
-    };
-    if let Ok(formatted) = GlbExport::<DefaultExtensions>::export(&mut Graph::new(), &doc) {
-        let _ = fs::write(dest_file, formatted.0);
-        info!("Mesh {} => {}", source_file.display(), dest_file.display());
     }
-
-    true
 }

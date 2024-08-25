@@ -5,12 +5,15 @@ use std::{
 
 use bevy::{
     log::{Level, LogPlugin},
+    pbr::{experimental::meshlet::MeshletPlugin, MeshRenderPlugin},
     prelude::*,
+    render::{mesh::MeshPlugin, pipelined_rendering::PipelinedRenderingPlugin, RenderPlugin},
 };
+use bevy_gltf_kun::GltfKunPlugin;
 use clap::Parser;
 use config::Config;
 use mesh::ProcessingMesh;
-use processing::{ProcessingType, RefreshTimer};
+use processing::{ProcessingType, RefreshTimer, UnprocessedFiles};
 use raw::ProcessingRaw;
 
 mod audio;
@@ -33,25 +36,37 @@ fn main() {
     let cli = Cli::parse();
     let config = load_configuration().unwrap_or_default();
     let mut app = App::new();
-    app.add_plugins(MinimalPlugins)
-        .add_plugins(LogPlugin {
+
+    app.add_plugins((
+        DefaultPlugins.set(LogPlugin {
             level: if cli.verbose.unwrap_or_default() {
                 Level::DEBUG
             } else {
                 Level::INFO
             },
+            filter: "error,bpm=debug".into(),
             ..default()
-        })
-        .insert_resource(config)
-        .add_systems(Startup, initialize)
-        .add_systems(Update, processing::check_for_stale_files);
+        }),
+        MeshletPlugin,
+        GltfKunPlugin::default(),
+    ))
+    .insert_resource(config)
+    .insert_resource(UnprocessedFiles(1))
+    .add_systems(Startup, initialize)
+    .add_systems(Update, processing::check_for_stale_files);
     ProcessingRaw::register(&mut app);
     ProcessingMesh::register(&mut app);
 
     let oneshot = cli.oneshot.unwrap_or(false);
 
     if oneshot {
-        app.update();
+        loop {
+            app.update();
+            if app.world().resource::<UnprocessedFiles>().0 <= 0 {
+                // ensures that everything gets processed even if that takes multiple cycles
+                break;
+            }
+        }
     } else {
         app.run();
     }
@@ -62,6 +77,7 @@ fn initialize(mut commands: Commands, config: Res<Config>) {
         config.file_watching_rate_seconds as f32,
         TimerMode::Repeating,
     )));
+    commands.spawn(Camera2dBundle::default()); // satisfy bevy's rendering cravings
 }
 
 fn load_configuration() -> Option<Config> {

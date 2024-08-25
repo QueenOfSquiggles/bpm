@@ -14,6 +14,9 @@ use bevy::prelude::*;
 use humantime::format_duration;
 use walkdir::WalkDir;
 
+#[derive(Resource)]
+pub struct UnprocessedFiles(pub usize);
+
 /// The core component that links an entity to a specific file in the staging directory
 #[derive(Component, Debug)]
 pub struct FileQueuedForProcessing {
@@ -60,6 +63,7 @@ pub fn check_for_stale_files(
     mut timer_query: Query<&mut RefreshTimer>,
     currently_queued: Query<&FileQueuedForProcessing>,
     mut commands: Commands,
+    mut unprocessed: ResMut<UnprocessedFiles>,
     time: Res<Time>,
     config: Res<Config>,
 ) {
@@ -121,6 +125,7 @@ pub fn check_for_stale_files(
             }
         }
     }
+    unprocessed.0 = count;
     if count > 0 {
         let total = count + currently_queued_paths.len();
         debug!(
