@@ -1,4 +1,7 @@
-use std::fs;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use bevy::prelude::*;
 
@@ -14,6 +17,11 @@ impl ProcessingType for ProcessingRaw {
 
     fn get_component() -> Self::Comp {
         FileRaw
+    }
+
+    fn get_destination(source: &PathBuf) -> Option<PathBuf> {
+        let base = source.strip_prefix(Path::new("assets-dev")).ok()?;
+        Some(Path::new("assets").join(&base))
     }
 
     fn matches(ext: &String, config: &Res<crate::config::Config>) -> bool {

@@ -5,7 +5,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{config::Config, raw::ProcessingRaw};
+use crate::{
+    config::Config,
+    mesh::ProcessingMesh,
+    raw::{self, ProcessingRaw},
+};
 use bevy::prelude::*;
 use humantime::format_duration;
 use walkdir::WalkDir;
@@ -24,6 +28,7 @@ pub trait ProcessingType: 'static {
     type Comp: Component;
     fn get_component() -> Self::Comp;
     fn matches(ext: &String, config: &Res<Config>) -> bool;
+    fn get_destination(source: &PathBuf) -> Option<PathBuf>;
     fn system(
         query: Query<(Entity, &FileQueuedForProcessing), With<Self::Comp>>,
         config: Res<Config>,
@@ -32,6 +37,19 @@ pub trait ProcessingType: 'static {
 
     fn register(app: &mut App) {
         app.add_systems(Update, Self::system);
+    }
+}
+
+pub struct AssetProcessing;
+
+impl AssetProcessing {
+    // I thought a type to encapsulate the fns would be useful, but right now there's just the one func. Shame about that
+
+    fn get_destination(source: &PathBuf) -> Option<PathBuf> {
+        if let Some(path) = raw::ProcessingRaw::get_destination(source) {
+            return Some(path);
+        }
+        None
     }
 }
 
@@ -56,6 +74,7 @@ pub fn check_for_stale_files(
         .collect::<Vec<_>>();
 
     let mut count: usize = 0;
+    let mut unhandled_files = Vec::<PathBuf>::new();
 
     for entry_result in WalkDir::new(Path::new("assets-dev"))
         .follow_links(true)
@@ -69,13 +88,17 @@ pub fn check_for_stale_files(
                 continue;
             }
         };
-
+        if entry.path() == Path::new("assets-dev").join("config.toml") {
+            continue;
+        }
         let Ok(entry_path) = entry.path().strip_prefix(Path::new("assets-dev")) else {
             error!("Failed to strip prefix 'assets-dev' from source file path. This likely means we somehow got in the wrong folder!!!");
             continue;
         };
         let source_path = Path::new("assets-dev").join(entry_path);
-        let dest_path = Path::new("assets").join(entry_path);
+        let Some(dest_path) = AssetProcessing::get_destination(&source_path) else {
+            continue;
+        };
 
         if currently_queued_paths.contains(&source_path) {
             // skip already queued paths.
@@ -93,6 +116,8 @@ pub fn check_for_stale_files(
             if queue_file(&mut commands, source_path.clone(), dest_path, &config) {
                 count += 1;
                 debug!("Queued for processing: {}", source_path.display());
+            } else {
+                unhandled_files.push(source_path);
             }
         }
     }
@@ -105,6 +130,13 @@ pub fn check_for_stale_files(
             total
         );
         debug!("Previously queued paths: {:#?}", currently_queued_paths);
+    }
+    if !unhandled_files.is_empty() {
+        let display_files = unhandled_files
+            .iter()
+            .map(|path| path.display())
+            .collect::<Vec<_>>();
+        debug!("Unhandled Files: {:#?}", display_files);
     }
 }
 
@@ -154,15 +186,18 @@ fn queue_file(
     else {
         return false;
     };
+
+    let fqfp = FileQueuedForProcessing {
+        source,
+        dest,
+        queue_time: Instant::now(),
+    };
     if ProcessingRaw::matches(&file_ext, config) {
-        commands.spawn((
-            FileQueuedForProcessing {
-                source,
-                dest,
-                queue_time: Instant::now(),
-            },
-            ProcessingRaw::get_component(),
-        ));
+        commands.spawn((fqfp, ProcessingRaw::get_component()));
+        return true;
+    }
+    if ProcessingMesh::matches(&file_ext, config) {
+        commands.spawn((fqfp, ProcessingMesh::get_component()));
         return true;
     }
     false

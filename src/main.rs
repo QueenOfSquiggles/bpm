@@ -9,6 +9,7 @@ use bevy::{
 };
 use clap::Parser;
 use config::Config;
+use mesh::ProcessingMesh;
 use processing::{ProcessingType, RefreshTimer};
 use raw::ProcessingRaw;
 
@@ -45,6 +46,7 @@ fn main() {
         .add_systems(Startup, initialize)
         .add_systems(Update, processing::check_for_stale_files);
     ProcessingRaw::register(&mut app);
+    ProcessingMesh::register(&mut app);
 
     let oneshot = cli.oneshot.unwrap_or(false);
 

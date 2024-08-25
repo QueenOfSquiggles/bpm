@@ -1,7 +1,7 @@
 use bevy::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Resource, Debug)]
+#[derive(Serialize, Deserialize, Resource, Debug, Clone)]
 pub struct Config {
     pub file_watching_rate_seconds: f64,
     pub extensions: Extensions,
@@ -9,7 +9,7 @@ pub struct Config {
     pub textures: TextureConfigs,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Extensions {
     pub raw: Vec<String>,
     pub texture: Vec<String>,
@@ -17,29 +17,29 @@ pub struct Extensions {
     pub audio: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MeshConfigs {
     pub use_meshlets: bool,
     pub storage: MeshStorage,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum MeshStorage {
     Glb,
     Gltf,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct TextureConfigs {
     pub filter: TextureFilter,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum TextureFilter {
     Nearest,
     Linear,
 }
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct AudioConfigs {}
 
 impl Default for Config {
